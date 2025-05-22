@@ -28,9 +28,10 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/klog/v2"
+
 	"volcano.sh/k8s-device-plugin/pkg/lock"
 	"volcano.sh/k8s-device-plugin/pkg/plugin/vgpu/config"
 	"volcano.sh/k8s-device-plugin/pkg/plugin/vgpu/util"
@@ -342,7 +343,9 @@ func (m *NvidiaDevicePlugin) Register() error {
 
 // GetDevicePluginOptions returns the values of the optional settings for this plugin
 func (m *NvidiaDevicePlugin) GetDevicePluginOptions(context.Context, *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
-	options := &pluginapi.DevicePluginOptions{}
+	options := &pluginapi.DevicePluginOptions{
+		GetPreferredAllocationAvailable: false,
+	}
 	return options, nil
 }
 
@@ -360,16 +363,9 @@ func (m *NvidiaDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.Device
 				return nil
 			case d := <-m.health:
 				// FIXME: there is no way to recover from the Unhealthy state.
-				//isChange := false
-				//if d.Health != pluginapi.Unhealthy {
-				//isChange = true
-				//}
 				d.Health = pluginapi.Unhealthy
 				log.Printf("'%s' device marked unhealthy: %s", m.resourceName, d.ID)
 				s.Send(&pluginapi.ListAndWatchResponse{Devices: m.virtualDevices})
-				//if isChange {
-				//	m.kubeInteractor.PatchUnhealthyGPUListOnNode(m.physicalDevices)
-				//}
 			}
 		}
 
@@ -387,6 +383,13 @@ func (m *NvidiaDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.Device
 			}
 		}
 	}
+}
+
+// GetPreferredAllocation returns the preferred allocation from the set of devices specified in the request
+func (m *NvidiaDevicePlugin) GetPreferredAllocation(ctx context.Context,
+	request *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
+	response := &pluginapi.PreferredAllocationResponse{}
+	return response, nil
 }
 
 func (m *NvidiaDevicePlugin) MIGAllocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
