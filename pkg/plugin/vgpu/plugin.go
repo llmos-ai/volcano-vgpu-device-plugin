@@ -28,9 +28,10 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/klog/v2"
+
 	"volcano.sh/k8s-device-plugin/pkg/lock"
 	"volcano.sh/k8s-device-plugin/pkg/plugin/vgpu/config"
 	"volcano.sh/k8s-device-plugin/pkg/plugin/vgpu/util"
@@ -38,7 +39,7 @@ import (
 	"github.com/NVIDIA/go-gpuallocator/gpuallocator"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
-	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
+	devicepluginv1beta1 "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
 // Constants to represent the various device list strategies
@@ -70,7 +71,7 @@ type NvidiaDevicePlugin struct {
 	schedulerConfig  *config.NvidiaConfig
 	operatingMode    string
 
-	virtualDevices []*pluginapi.Device
+	virtualDevices []*devicepluginv1beta1.Device
 	migCurrent     config.MigPartedSpec
 
 	server        *grpc.Server
@@ -213,7 +214,7 @@ func (m *NvidiaDevicePlugin) Serve() error {
 		return err
 	}
 
-	pluginapi.RegisterDevicePluginServer(m.server, m)
+	devicepluginv1beta1.RegisterDevicePluginServer(m.server, m)
 
 	go func() {
 		lastCrashTime := time.Now()
@@ -257,18 +258,18 @@ func (m *NvidiaDevicePlugin) Serve() error {
 
 // Register registers the device plugin for the given resourceName with Kubelet.
 func (m *NvidiaDevicePlugin) Register() error {
-	conn, err := m.dial(pluginapi.KubeletSocket, 5*time.Second)
+	conn, err := m.dial(devicepluginv1beta1.KubeletSocket, 5*time.Second)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	client := pluginapi.NewRegistrationClient(conn)
-	reqt := &pluginapi.RegisterRequest{
-		Version:      pluginapi.Version,
+	client := devicepluginv1beta1.NewRegistrationClient(conn)
+	reqt := &devicepluginv1beta1.RegisterRequest{
+		Version:      devicepluginv1beta1.Version,
 		Endpoint:     path.Base(m.socket),
 		ResourceName: m.resourceName,
-		Options:      &pluginapi.DevicePluginOptions{},
+		Options:      &devicepluginv1beta1.DevicePluginOptions{},
 	}
 
 	_, err = client.Register(context.Background(), reqt)
@@ -279,15 +280,17 @@ func (m *NvidiaDevicePlugin) Register() error {
 }
 
 // GetDevicePluginOptions returns the values of the optional settings for this plugin
-func (m *NvidiaDevicePlugin) GetDevicePluginOptions(context.Context, *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
-	options := &pluginapi.DevicePluginOptions{}
+func (m *NvidiaDevicePlugin) GetDevicePluginOptions(context.Context, *devicepluginv1beta1.Empty) (*devicepluginv1beta1.DevicePluginOptions, error) {
+	options := &devicepluginv1beta1.DevicePluginOptions{
+		GetPreferredAllocationAvailable: false,
+	}
 	return options, nil
 }
 
 // ListAndWatch lists devices and update that list according to the health status
-func (m *NvidiaDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin_ListAndWatchServer) error {
+func (m *NvidiaDevicePlugin) ListAndWatch(e *devicepluginv1beta1.Empty, s devicepluginv1beta1.DevicePlugin_ListAndWatchServer) error {
 	if m.resourceName == util.ResourceMem {
-		err := s.Send(&pluginapi.ListAndWatchResponse{Devices: m.virtualDevices})
+		err := s.Send(&devicepluginv1beta1.ListAndWatchResponse{Devices: m.virtualDevices})
 		if err != nil {
 			log.Fatalf("failed sending devices %d: %v", len(m.virtualDevices), err)
 		}
@@ -298,37 +301,37 @@ func (m *NvidiaDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.Device
 				return nil
 			case d := <-m.health:
 				// FIXME: there is no way to recover from the Unhealthy state.
-				//isChange := false
-				//if d.Health != pluginapi.Unhealthy {
-				//isChange = true
-				//}
-				d.Health = pluginapi.Unhealthy
+				d.Health = devicepluginv1beta1.Unhealthy
 				log.Printf("'%s' device marked unhealthy: %s", m.resourceName, d.ID)
-				s.Send(&pluginapi.ListAndWatchResponse{Devices: m.virtualDevices})
-				//if isChange {
-				//	m.kubeInteractor.PatchUnhealthyGPUListOnNode(m.physicalDevices)
-				//}
+				s.Send(&devicepluginv1beta1.ListAndWatchResponse{Devices: m.virtualDevices})
 			}
 		}
 
 	} else {
-		_ = s.Send(&pluginapi.ListAndWatchResponse{Devices: m.apiDevices()})
+		_ = s.Send(&devicepluginv1beta1.ListAndWatchResponse{Devices: m.apiDevices()})
 		for {
 			select {
 			case <-m.stop:
 				return nil
 			case d := <-m.health:
 				// FIXME: there is no way to recover from the Unhealthy state.
-				//d.Health = pluginapi.Unhealthy
+				d.Health = devicepluginv1beta1.Unhealthy
 				log.Printf("'%s' device marked unhealthy: %s", m.resourceName, d.ID)
-				_ = s.Send(&pluginapi.ListAndWatchResponse{Devices: m.apiDevices()})
+				_ = s.Send(&devicepluginv1beta1.ListAndWatchResponse{Devices: m.apiDevices()})
 			}
 		}
 	}
 }
 
-func (m *NvidiaDevicePlugin) MIGAllocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
-	responses := pluginapi.AllocateResponse{}
+// GetPreferredAllocation returns the preferred allocation from the set of devices specified in the request
+func (m *NvidiaDevicePlugin) GetPreferredAllocation(ctx context.Context,
+	request *devicepluginv1beta1.PreferredAllocationRequest) (*devicepluginv1beta1.PreferredAllocationResponse, error) {
+	response := &devicepluginv1beta1.PreferredAllocationResponse{}
+	return response, nil
+}
+
+func (m *NvidiaDevicePlugin) MIGAllocate(ctx context.Context, reqs *devicepluginv1beta1.AllocateRequest) (*devicepluginv1beta1.AllocateResponse, error) {
+	responses := devicepluginv1beta1.AllocateResponse{}
 	for _, req := range reqs.ContainerRequests {
 		for _, id := range req.DevicesIDs {
 			if !m.deviceExists(id) {
@@ -336,7 +339,7 @@ func (m *NvidiaDevicePlugin) MIGAllocate(ctx context.Context, reqs *pluginapi.Al
 			}
 		}
 
-		response := pluginapi.ContainerAllocateResponse{}
+		response := devicepluginv1beta1.ContainerAllocateResponse{}
 
 		uuids := req.DevicesIDs
 		deviceIDs := m.deviceIDsFromUUIDs(uuids)
@@ -351,18 +354,18 @@ func (m *NvidiaDevicePlugin) MIGAllocate(ctx context.Context, reqs *pluginapi.Al
 }
 
 // Allocate which return list of devices.
-func (m *NvidiaDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
+func (m *NvidiaDevicePlugin) Allocate(ctx context.Context, reqs *devicepluginv1beta1.AllocateRequest) (*devicepluginv1beta1.AllocateResponse, error) {
 	if len(reqs.ContainerRequests) > 1 {
-		return &pluginapi.AllocateResponse{}, errors.New("multiple Container Requests not supported")
+		return &devicepluginv1beta1.AllocateResponse{}, errors.New("multiple Container Requests not supported")
 	}
 	if strings.Compare(m.migStrategy, "mixed") == 0 {
 		return m.MIGAllocate(ctx, reqs)
 	}
-	responses := pluginapi.AllocateResponse{}
+	responses := devicepluginv1beta1.AllocateResponse{}
 
 	if strings.Compare(m.resourceName, util.ResourceMem) == 0 || strings.Compare(m.resourceName, util.ResourceCores) == 0 {
 		for range reqs.ContainerRequests {
-			responses.ContainerResponses = append(responses.ContainerResponses, &pluginapi.ContainerAllocateResponse{})
+			responses.ContainerResponses = append(responses.ContainerResponses, &devicepluginv1beta1.ContainerAllocateResponse{})
 		}
 		return &responses, nil
 	}
@@ -371,12 +374,12 @@ func (m *NvidiaDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Alloc
 	current, err := util.GetPendingPod(nodename)
 	if err != nil {
 		lock.ReleaseNodeLock(nodename, util.VGPUDeviceName)
-		return &pluginapi.AllocateResponse{}, err
+		return &devicepluginv1beta1.AllocateResponse{}, err
 	}
 	if current == nil {
 		klog.Errorf("no pending pod found on node %s", nodename)
 		lock.ReleaseNodeLock(nodename, util.VGPUDeviceName)
-		return &pluginapi.AllocateResponse{}, errors.New("no pending pod found on node")
+		return &devicepluginv1beta1.AllocateResponse{}, errors.New("no pending pod found on node")
 	}
 
 	for idx := range reqs.ContainerRequests {
@@ -385,15 +388,15 @@ func (m *NvidiaDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Alloc
 		if err != nil {
 			klog.Errorln("get device from annotation failed", err.Error())
 			util.PodAllocationFailed(nodename, current)
-			return &pluginapi.AllocateResponse{}, err
+			return &devicepluginv1beta1.AllocateResponse{}, err
 		}
 		if len(devreq) != len(reqs.ContainerRequests[idx].DevicesIDs) {
 			klog.Errorln("device number not matched", devreq, reqs.ContainerRequests[idx].DevicesIDs)
 			util.PodAllocationFailed(nodename, current)
-			return &pluginapi.AllocateResponse{}, errors.New("device number not matched")
+			return &devicepluginv1beta1.AllocateResponse{}, errors.New("device number not matched")
 		}
 
-		response := pluginapi.ContainerAllocateResponse{}
+		response := devicepluginv1beta1.ContainerAllocateResponse{}
 		response.Envs = make(map[string]string)
 		response.Envs["NVIDIA_VISIBLE_DEVICES"] = strings.Join(m.GetContainerDeviceStrArray(devreq), ",")
 
@@ -401,7 +404,7 @@ func (m *NvidiaDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Alloc
 		if err != nil {
 			klog.Errorln("Erase annotation failed", err.Error())
 			util.PodAllocationFailed(nodename, current)
-			return &pluginapi.AllocateResponse{}, err
+			return &devicepluginv1beta1.AllocateResponse{}, err
 		}
 
 		if m.operatingMode != "mig" {
@@ -421,13 +424,13 @@ func (m *NvidiaDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Alloc
 			hostHookPath := os.Getenv("HOOK_PATH")
 
 			response.Mounts = append(response.Mounts,
-				&pluginapi.Mount{ContainerPath: "/usr/local/vgpu/libvgpu.so",
+				&devicepluginv1beta1.Mount{ContainerPath: "/usr/local/vgpu/libvgpu.so",
 					HostPath: hostHookPath + "/libvgpu.so",
 					ReadOnly: true},
-				&pluginapi.Mount{ContainerPath: "/tmp/vgpu",
+				&devicepluginv1beta1.Mount{ContainerPath: "/tmp/vgpu",
 					HostPath: cacheFileHostDirectory,
 					ReadOnly: false},
-				&pluginapi.Mount{ContainerPath: "/tmp/vgpulock",
+				&devicepluginv1beta1.Mount{ContainerPath: "/tmp/vgpulock",
 					HostPath: "/tmp/vgpulock",
 					ReadOnly: false},
 			)
@@ -439,7 +442,7 @@ func (m *NvidiaDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Alloc
 				}
 			}
 			if !found {
-				response.Mounts = append(response.Mounts, &pluginapi.Mount{ContainerPath: "/etc/ld.so.preload",
+				response.Mounts = append(response.Mounts, &devicepluginv1beta1.Mount{ContainerPath: "/etc/ld.so.preload",
 					HostPath: hostHookPath + "/ld.so.preload",
 					ReadOnly: true},
 				)
@@ -453,8 +456,8 @@ func (m *NvidiaDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Alloc
 }
 
 // PreStartContainer is unimplemented for this plugin
-func (m *NvidiaDevicePlugin) PreStartContainer(context.Context, *pluginapi.PreStartContainerRequest) (*pluginapi.PreStartContainerResponse, error) {
-	return &pluginapi.PreStartContainerResponse{}, nil
+func (m *NvidiaDevicePlugin) PreStartContainer(context.Context, *devicepluginv1beta1.PreStartContainerRequest) (*devicepluginv1beta1.PreStartContainerResponse, error) {
+	return &devicepluginv1beta1.PreStartContainerResponse{}, nil
 }
 
 // dial establishes the gRPC communication with the registered device plugin.
@@ -497,23 +500,23 @@ func (m *NvidiaDevicePlugin) deviceIDsFromUUIDs(uuids []string) []string {
 	return uuids
 }
 
-func (m *NvidiaDevicePlugin) apiDevices() []*pluginapi.Device {
+func (m *NvidiaDevicePlugin) apiDevices() []*devicepluginv1beta1.Device {
 	if strings.Compare(m.migStrategy, "mixed") == 0 {
-		var pdevs []*pluginapi.Device
+		var pdevs []*devicepluginv1beta1.Device
 		for _, d := range m.cachedDevices {
 			pdevs = append(pdevs, &d.Device)
 		}
 		return pdevs
 	}
 	devices := m.Devices()
-	var res []*pluginapi.Device
+	var res []*devicepluginv1beta1.Device
 
 	if strings.Compare(m.resourceName, util.ResourceMem) == 0 {
 		for _, dev := range devices {
 			i := 0
 			klog.Infoln("memory=", dev.Memory, "id=", dev.ID)
 			for i < int(32767) {
-				res = append(res, &pluginapi.Device{
+				res = append(res, &devicepluginv1beta1.Device{
 					ID:       fmt.Sprintf("%v-memory-%v", dev.ID, i),
 					Health:   dev.Health,
 					Topology: nil,
@@ -528,7 +531,7 @@ func (m *NvidiaDevicePlugin) apiDevices() []*pluginapi.Device {
 		for _, dev := range devices {
 			i := 0
 			for i < 100 {
-				res = append(res, &pluginapi.Device{
+				res = append(res, &devicepluginv1beta1.Device{
 					ID:       fmt.Sprintf("%v-core-%v", dev.ID, i),
 					Health:   dev.Health,
 					Topology: nil,
@@ -542,7 +545,7 @@ func (m *NvidiaDevicePlugin) apiDevices() []*pluginapi.Device {
 	for _, dev := range devices {
 		for i := uint(0); i < config.DeviceSplitCount; i++ {
 			id := fmt.Sprintf("%v-%v", dev.ID, i)
-			res = append(res, &pluginapi.Device{
+			res = append(res, &devicepluginv1beta1.Device{
 				ID:       id,
 				Health:   dev.Health,
 				Topology: nil,
