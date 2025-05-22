@@ -134,3 +134,4 @@ volcano-vgpu-device-plugin
 
 lib/nvidia/libvgpu/build
 
+vendor

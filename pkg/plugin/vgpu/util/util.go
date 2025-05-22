@@ -30,12 +30,13 @@ import (
 	"strings"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
+
 	"volcano.sh/k8s-device-plugin/pkg/lock"
 	"volcano.sh/k8s-device-plugin/pkg/plugin/vgpu/config"
 )
