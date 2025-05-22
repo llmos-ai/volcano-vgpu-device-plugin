@@ -1,0 +1,60 @@
+ARG GOLANG_IMAGE=golang:1.24-bookworm
+ARG VGPU_IMAGE=projecthami/hami:v2.5.1
+
+###############################################################################
+# Builder stage: cache dependencies, compile binaries
+###############################################################################
+FROM $GOLANG_IMAGE AS builder
+
+# Better caching: only re-download modules when they change
+WORKDIR /go/src/volcano.sh/devices
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the rest of the code and set architecture
+COPY . .
+ARG TARGETARCH
+RUN go env -w GOARCH=${TARGETARCH} \
+ && go env -w CGO_LDFLAGS_ALLOW='-Wl,--unresolved-symbols=ignore-in-object-files'
+
+# Build your plugins
+RUN go build -ldflags="-s -w" -o volcano-vgpu-device-plugin ./cmd/vgpu \
+ && go build -ldflags="-s -w" -o volcano-vgpu-monitor ./cmd/vgpu-monitor
+
+# Pin NVIDIA tool to a known version for reproducibility
+RUN go install github.com/NVIDIA/mig-parted/cmd/nvidia-mig-parted@v0.12.1
+
+#  Build the vGPU library
+FROM $VGPU_IMAGE AS vgpu-lib
+
+###############################################################################
+# Final stage: minimal runtime image
+###############################################################################
+# Switch to Debian slim for a smaller footprint
+FROM debian:bookworm-slim
+
+# Copy CA certs so HTTPS works
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# NVIDIA runtime env (typically set by k8s)
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=utility
+
+# Binaries and libraries
+COPY --from=builder /go/src/volcano.sh/devices/volcano-vgpu-device-plugin /usr/local/bin/
+COPY --from=builder /go/src/volcano.sh/devices/volcano-vgpu-monitor /usr/local/bin/
+COPY --from=builder /go/bin/nvidia-mig-parted /usr/local/bin/
+# NVIDIA preload config and vGPU library
+COPY --from=builder /go/src/volcano.sh/devices/lib/nvidia/ld.so.preload /k8s-vgpu/lib/nvidia/
+COPY --from=vgpu-lib /k8s-vgpu/lib/nvidia/libvgpu.so.* /k8s-vgpu/lib/nvidia/libvgpu.so
+
+# Labels/documentation
+LABEL maintainer="support@1block.ai" \
+      description="Volcano vGPU device plugin + monitor"
+
+# (Optional) simple healthcheck
+HEALTHCHECK --interval=30s --timeout=3s CMD volcano-vgpu-device-plugin --version || exit 1
+
+ENTRYPOINT ["volcano-vgpu-device-plugin"]

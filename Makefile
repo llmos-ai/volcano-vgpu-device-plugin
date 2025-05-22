@@ -18,7 +18,7 @@
 include Makefile.def
 
 ##### Global variables #####
-REGISTRY ?= projecthami
+REGISTRY ?= ghcr.io/llmos-ai
 VERSION  ?= 1.0.0
 
 ##### Using `BUILD_PLATFORMS=linux/arm64 make all` to build arm64 arch image locally
@@ -29,25 +29,15 @@ BUILD_PLATFORMS ?= linux/amd64
 
 all: ubuntu20.04
 
+build:
+	docker buildx build --platform $(BUILD_PLATFORMS) \
+		--tag $(REGISTRY)/volcano-vgpu-device-plugin:$(VERSION)\
+		--file docker/Dockerfile.bookworm .
+
 push:
 	docker buildx build --platform $(BUILD_PLATFORMS) --push \
-		--tag $(REGISTRY)/volcano-vgpu-device-plugin:$(VERSION)-ubuntu20.04 \
-		--file docker/Dockerfile.ubuntu20.04 .
-
-push-short:
-	docker buildx build --platform $(BUILD_PLATFORMS) --push \
 		--tag $(REGISTRY)/volcano-vgpu-device-plugin:$(VERSION)\
-		--file docker/Dockerfile.ubuntu20.04 .
-
-push-latest:
-	docker buildx build --platform $(BUILD_PLATFORMS) --push \
-		--tag $(REGISTRY)/volcano-vgpu-device-plugin:latest\
-		--file docker/Dockerfile.ubuntu20.04 .
-
-ubuntu20.04:
-	docker buildx build --platform $(BUILD_PLATFORMS) --load \
-		--tag $(REGISTRY)/volcano-vgpu-device-plugin:$(VERSION)-ubuntu20.04 \
-		--file docker/Dockerfile.ubuntu20.04 .
+		--file docker/Dockerfile.bookworm .
 
 BIN_DIR=_output/bin
 RELEASE_DIR=_output/release
