@@ -200,7 +200,7 @@ spec:
       priorityClassName: "system-node-critical"
       serviceAccount: volcano-device-plugin
       containers:
-      - image: docker.io/projecthami/volcano-vgpu-device-plugin:v1.9.4
+      - image: ghcr.io/llmos-ai/volcano-vgpu-device-plugin:main-head
         args: ["--device-split-count=10"]
         lifecycle:
           postStart:
@@ -235,7 +235,7 @@ spec:
           mountPath: /usr/local/vgpu
         - name: hosttmp
           mountPath: /tmp
-      - image: docker.io/projecthami/volcano-vgpu-device-plugin:v1.9.4
+      - image: ghcr.io/llmos-ai/volcano-vgpu-device-plugin:main-head
         name: monitor
         command:
         - /bin/bash

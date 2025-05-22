@@ -16,7 +16,7 @@ FROM ubuntu:20.04 AS builder
 ARG TARGETARCH
 RUN apt-get update
 RUN apt-get -y install ca-certificates g++ wget
-RUN wget -qO- https://storage.googleapis.com/golang/go1.23.7.linux-${TARGETARCH}.tar.gz | tar -C /usr/local -zx
+RUN wget -qO- https://storage.googleapis.com/golang/go1.24.3.linux-${TARGETARCH}.tar.gz | tar -C /usr/local -zx
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 WORKDIR /go/src/volcano.sh/devices
@@ -31,15 +31,7 @@ RUN go install github.com/NVIDIA/mig-parted/cmd/nvidia-mig-parted@latest
 FROM nvidia/cuda:12.2.0-devel-ubuntu20.04 AS nvidia_builder
 ARG TARGETARCH
 RUN apt-get update
-RUN apt-get -y install wget openssl libssl-dev
-RUN case "${TARGETARCH}" in \
-        "amd64") wget https://cmake.org/files/v3.19/cmake-3.19.8-Linux-x86_64.tar.gz ;; \
-        "arm64") wget https://cmake.org/files/v3.19/cmake-3.19.8-Linux-aarch64.tar.gz ;; \
-        *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
-    esac && \
-    tar -xzf cmake-3.19.8-Linux-*.tar.gz -C /opt && \
-    ln -s /opt/cmake-3.19.8-Linux-*/bin/cmake /usr/local/bin/cmake && \
-    rm cmake-3.19.8-Linux-*.tar.gz
+RUN apt-get -y install wget openssl libssl-dev git cmake
 COPY ./libvgpu /libvgpu
 WORKDIR /libvgpu
 RUN rm -rf /libvgpu/build
